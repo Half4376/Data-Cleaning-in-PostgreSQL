@@ -1,0 +1,246 @@
+-- Drop the staging table if it exists
+DROP TABLE IF EXISTS hashville_staging;
+
+-- Create the staging table with all columns as text
+CREATE TABLE hashville_staging (
+    UniqueID TEXT,
+    ParcelID TEXT,
+    LandUse TEXT,
+    PropertyAddress TEXT,
+    SaleDate TEXT,
+    SalePrice TEXT,
+    LegalReference TEXT,
+    SoldAsVacant TEXT,
+    OwnerName TEXT,
+    OwnerAddress TEXT,
+    Acreage TEXT,
+    TaxDistrict TEXT,
+    LandValue TEXT,
+    BuildingValue TEXT,
+    TotalValue TEXT,
+    YearBuilt TEXT,
+    Bedrooms TEXT,
+    FullBath TEXT,
+    HalfBath TEXT
+);
+
+-- Drop the final table if it exists
+DROP TABLE IF EXISTS hashville;
+
+-- Create the final table with appropriate data types
+CREATE TABLE hashville (
+    UniqueID INT,
+    ParcelID VARCHAR(255),
+    LandUse VARCHAR(255),
+    PropertyAddress VARCHAR(255),
+    SaleDate DATE,
+    SalePrice NUMERIC,
+    LegalReference VARCHAR(255),
+    SoldAsVacant BOOLEAN,
+    OwnerName VARCHAR(255),
+    OwnerAddress VARCHAR(255),
+    Acreage NUMERIC,
+    TaxDistrict VARCHAR(255),
+    LandValue NUMERIC,
+    BuildingValue NUMERIC,
+    TotalValue NUMERIC,
+    YearBuilt INT,
+    Bedrooms INT,
+    FullBath INT,
+    HalfBath INT
+);
+
+-- Insert data from the staging table, transforming as needed
+INSERT INTO hashville (
+    UniqueID, ParcelID, LandUse, PropertyAddress, SaleDate, SalePrice, LegalReference, SoldAsVacant, OwnerName, OwnerAddress, Acreage, TaxDistrict, LandValue, BuildingValue, TotalValue, YearBuilt, Bedrooms, FullBath, HalfBath
+)
+SELECT 
+    CAST(UniqueID AS INT),
+    ParcelID,
+    LandUse,
+    PropertyAddress,
+    TO_DATE(SaleDate, 'Month DD, YYYY'),
+	REPLACE(REPLACE(SalePrice, '$', ''), ',', '')::NUMERIC,
+    LegalReference,
+    CASE WHEN SoldAsVacant = 'Yes' THEN TRUE ELSE FALSE END,
+    OwnerName,
+    OwnerAddress,
+    REPLACE(Acreage, ',', '')::NUMERIC,
+    TaxDistrict,
+    REPLACE(LandValue, ',', '')::NUMERIC,
+    REPLACE(BuildingValue, ',', '')::NUMERIC,
+    REPLACE(TotalValue, ',', '')::NUMERIC,
+    CAST(YearBuilt AS INT),
+    CAST(Bedrooms AS INT),
+    CAST(FullBath AS INT),
+    CAST(HalfBath AS INT)
+FROM 
+    hashville_staging;
+--------------------------------------------------------------------------------------------------------------------------
+
+-- Populate Property Address data
+
+--SELECT PropertyAddress
+SELECT *
+FROM hashville
+--WHERE PropertyAddress is null;
+ORDER BY ParcelID;
+
+
+SELECT 
+	a.ParcelID, 
+	a.PropertyAddress, 
+	b.ParcelID, 
+	b.PropertyAddress,
+	COALESCE(a.PropertyAddress, b.PropertyAddress) AS CorrectedPropertyAddress
+FROM hashville a
+JOIN hashville b
+	ON a.ParcelID = b.ParcelID
+	AND a.UniqueID <> b.UniqueID
+WHERE a.PropertyAddress IS NULL;
+
+UPDATE hashville a
+SET PropertyAddress = COALESCE(a.PropertyAddress, b.PropertyAddress)
+FROM hashville b
+WHERE a.ParcelID = b.ParcelID
+	AND a.UniqueID <> b.UniqueID
+	AND a.PropertyAddress IS NULL
+
+--------------------------------------------------------------------------------------------------------------------------
+
+-- Breaking out Address into Individual Columns (Address, City, State)
+
+SELECT PropertyAddress
+FROM hashville
+
+-- Splits 'PropertyAddress' at the first comma, extracts part before comma
+SELECT
+	SUBSTRING(PropertyAddress FROM 1 FOR POSITION(',' IN PropertyAddress) - 1) AS Address,
+	SUBSTRING(PropertyAddress FROM POSITION(',' IN PropertyAddress) + 1 FOR LENGTH(PropertyAddress)) AS RestOfAddress
+FROM hashville;
+
+-- Add the new column to the table
+ALTER TABLE hashville
+ADD PropertySplitAddress varchar(255);
+
+-- Update the new column with the substring before the first comma
+UPDATE hashville
+SET PropertySplitAddress = SUBSTRING(PropertyAddress FROM 1 FOR POSITION(',' IN PropertyAddress) - 1)
+
+-- Add the new column to the table
+ALTER TABLE hashville
+ADD PropertySplitCity varchar(255);
+
+UPDATE hashville
+SET PropertySplitCity = 
+	TRIM(SUBSTRING(PropertyAddress FROM POSITION(',' IN PropertyAddress) + 1 FOR LENGTH(PropertyAddress)));
+
+-- Split owner address using 'SPLIT_PART'
+SELECT
+	SPLIT_PART(OwnerAddress, ',', 1) AS Part1,
+	SPLIT_PART(OwnerAddress, ',', 2) AS Part2,
+	SPLIT_PART(OwnerAddress, ',', 3) AS Part3
+FROM
+	hashville;
+
+-- Make new columns and update them 
+
+-- Add new columns to the table
+ALTER TABLE hashville
+ADD OwnerSplitAddress VARCHAR(255);
+
+ALTER TABLE hashville
+ADD OwnerSplitCity VARCHAR(255);
+
+ALTER TABLE hashville
+ADD OwnerSplitState VARCHAR(255);
+
+-- Update the new columns with split parts of OwnerAddress
+UPDATE hashville
+SET OwnerSplitAddress = SPLIT_PART(OwnerAddress, ',', 1);
+
+UPDATE hashville
+SET OwnerSplitCity = SPLIT_PART(OwnerAddress, ',', 2);
+
+UPDATE hashville
+SET OwnerSplitState = SPLIT_PART(OwnerAddress, ',', 3);
+
+--------------------------------------------------------------------------------------------------------------------------
+
+-- Change Y and N to Yes and No in "Sold as Vacant" field
+
+SELECT SoldAsVacant, COUNT(SoldAsVacant)
+FROM hashville
+GROUP BY SoldAsVacant
+ORDER BY COUNT(SoldAsVacant);
+
+SELECT
+	SoldAsVacant,
+	CASE
+		WHEN SoldAsVacant = 'Y' THEN 'Yes'
+		WHEN SoldAsVacant = 'N' THEN 'No'
+		ELSE SoldAsVacant
+	END AS SoldVacantTranslated
+FROM hashville;
+
+UPDATE hashville
+SET SoldAsVacant = CASE
+	WHEN SoldAsVacant = 'Y' THEN 'Yes'
+	WHEN SoldAsVacant = 'N' THEN 'No'
+	ELSE SoldAsVacant
+END;
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- Remove Duplicates
+
+-- Search for duplicates
+WITH RowNumCTE AS (
+	SELECT *,
+			ROW_NUMBER() OVER (
+				PARTITION BY ParcelID,
+							PropertyAddress,
+							SalePrice,
+							SaleDate,
+							LegalReference
+				ORDER BY UniqueID
+			) AS row_num
+	FROM hashville
+)
+SELECT *
+FROM RowNumCTE
+WHERE row_num > 1
+ORDER BY PropertyAddress
+
+-- Delete duplicate rows
+WITH RowNumCTE AS (
+    SELECT UniqueID,
+           ROW_NUMBER() OVER (
+               PARTITION BY ParcelID,
+                            PropertyAddress,
+                            SalePrice,
+                            SaleDate,
+                            LegalReference
+               ORDER BY UniqueID
+           ) AS row_num
+    FROM hashville
+)
+DELETE FROM hashville
+WHERE UniqueID IN (
+    SELECT UniqueID
+    FROM RowNumCTE
+    WHERE row_num > 1
+);
+
+---------------------------------------------------------------------------------------------------------
+
+-- Delete Unused Columns
+
+SELECT *
+FROM hashville
+
+ALTER TABLE hashville
+DROP COLUMN OwnerAddress, 
+DROP COLUMN TaxDistrict, 
+DROP COLUMN PropertyAddress, 
+DROP COLUMN SaleDate;
