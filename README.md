@@ -22,7 +22,7 @@ This project involves:
 
 - **Nashville Housing Data**: Downloaded from [here](https://github.com/AlexTheAnalyst/PortfolioProjects/blob/main/Nashville%20Housing%20Data%20for%20Data%20Cleaning.xlsx).
 
-- ## Tools and Technologies
+## Tools and Technologies
 
 - **PostgreSQL**: For data cleaning and transformation.
 - **Excel**: For initial data inspection.
